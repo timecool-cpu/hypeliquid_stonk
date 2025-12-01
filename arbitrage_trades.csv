@@ -1,0 +1,2 @@
+timestamp,action,position_id,direction,position_size,entry_spread,entry_flx_bid,entry_flx_ask,entry_xyz_bid,entry_xyz_ask,exit_spread,exit_flx_bid,exit_flx_ask,exit_xyz_bid,exit_xyz_ask,exit_method,holding_seconds,realized_pnl,notes
+2025-12-01 16:03:54,OPEN,XYZ_TO_FLX_20251201160354,XYZ_TO_FLX,100,0.4300,426.12,426.18,425.56,425.69,,,,,,,,,DRY-RUN模拟交易

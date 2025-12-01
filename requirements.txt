@@ -1,0 +1,5 @@
+hyperliquid-python-sdk
+pandas
+colorama
+python-dotenv
+requests
