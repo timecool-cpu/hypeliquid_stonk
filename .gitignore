@@ -1,0 +1,54 @@
+# 环境变量和敏感信息
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 虚拟环境
+venv/
+ENV/
+env/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 交易日志和数据文件（不上传到github）
+*.csv
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# 测试
+.coverage
+.pytest_cache/
+htmlcov/
+
+*.pyc

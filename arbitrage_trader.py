@@ -4,8 +4,13 @@
 """
 import time
 import sys
+import os
 from datetime import datetime
 from colorama import Fore, Style, init
+
+# 加载环境变量
+from dotenv import load_dotenv
+load_dotenv()
 
 # 导入现有模块
 import config
@@ -13,7 +18,9 @@ import arbitrage_config
 from arbitrage_calculator import ArbitrageCalculator
 from position_manager import PositionManager, Position
 from arbitrage_logger import ArbitrageLogger
+from spread_profit_monitor import SpreadProfitMonitor
 import utils
+import hip3_trading  # HIP-3资产交易工具
 
 # 导入Hyperliquid SDK
 from hyperliquid.info import Info
@@ -37,10 +44,44 @@ class ArbitrageTrader:
         # 初始化API
         self.info = Info(skip_ws=True)
         
+        # 实盘模式需要初始化Exchange API
+        if not self.dry_run:
+            from hyperliquid.exchange import Exchange
+            from hyperliquid.utils import constants
+            from eth_account import Account
+            
+            # 从环境变量读取私钥
+            private_key = os.getenv('HYPERLIQUID_PRIVATE_KEY')
+            if not private_key:
+                raise ValueError("实盘模式需要设置HYPERLIQUID_PRIVATE_KEY环境变量")
+            
+            # 初始化Exchange，添加spot_meta和perp_dexs支持HIP-3资产
+            account = Account.from_key(private_key)
+            # 获取spot meta信息
+            _info = Info(skip_ws=True)
+            spot_meta = _info.spot_meta()
+            
+            # 获取所有perp_dexs（包括xyz, flx等builder-deployed dex）
+            perp_dexs_response = _info.perp_dexs()
+            perp_dex_names = ['']  # 默认dex
+            for dex in perp_dexs_response[1:]:
+                if dex and 'name' in dex:
+                    perp_dex_names.append(dex['name'])
+            
+            self.exchange = Exchange(account, spot_meta=spot_meta, perp_dexs=perp_dex_names)
+            self.wallet_address = account.address
+            
+            print(f"{Fore.CYAN}钱包地址: {self.wallet_address}{Style.RESET_ALL}")
+            print(f"{Fore.CYAN}已加载perp dexs: {perp_dex_names}{Style.RESET_ALL}")
+        else:
+            self.exchange = None
+            self.wallet_address = None
+        
         # 初始化核心组件
         self.calculator = ArbitrageCalculator()
         self.position_manager = PositionManager(self.calculator)
         self.logger = ArbitrageLogger()
+        self.profit_monitor = SpreadProfitMonitor()
         
         # 价差历史(用于加仓判断)
         self.best_spread_seen = 0
@@ -55,7 +96,8 @@ class ArbitrageTrader:
         print(f"监控间隔: {arbitrage_config.MONITOR_INTERVAL}秒")
         print(f"最小利润阈值: ${arbitrage_config.MIN_NET_PROFIT:.2f}")
         print(f"止盈目标: ${arbitrage_config.TAKE_PROFIT_TARGET:.2f}")
-        print(f"超时兜底: {arbitrage_config.POSITION_TIMEOUT_HOURS}小时\n")
+        print(f"超时兜底: {arbitrage_config.POSITION_TIMEOUT_HOURS}小时")
+        print(f"价差监控日志: spread_profit_log.csv\n")
     
     def get_market_data(self):
         """
@@ -212,14 +254,145 @@ class ArbitrageTrader:
             
             return position
         
+        
         else:
-            # TODO: 实盘交易逻辑
-            # 1. 使用Hyperliquid Exchange API下单
-            # 2. 同时在FLX和XYZ下market order
-            # 3. 确认成交
-            # 4. 记录实际成交价格和仓位
-            print(f"{Fore.RED}实盘交易暂未实现{Style.RESET_ALL}")
-            return None
+            # 实盘交易逻辑
+            print(f"\n{Fore.RED}{'=' * 80}")
+            print(f"[LIVE] 实盘开仓")
+            print(f"{'=' * 80}{Style.RESET_ALL}")
+            print(f"方向: {opportunity['direction']}")
+            print(f"可执行价差: ${opportunity['spread']:.4f}")
+            print(f"预期净利润: ${opportunity['net_profit']:.4f}")
+            print(f"仓位大小: ${arbitrage_config.INITIAL_POSITION_SIZE}")
+            
+            try:
+                # 计算每个币种的数量
+                position_size_usd = arbitrage_config.INITIAL_POSITION_SIZE
+                
+                # FLX和XYZ都用同一个价格（mid price）来计算数量
+                avg_price = (market_data['flx_mid'] + market_data['xyz_mid']) / 2
+                coin_quantity_raw = position_size_usd / avg_price
+                
+                # 获取每个资产的szDecimals
+                flx_asset = self.exchange.info.name_to_asset(config.ASSET_PAIR_2)
+                xyz_asset = self.exchange.info.name_to_asset(config.ASSET_PAIR_1)
+                flx_sz_decimals = self.exchange.info.asset_to_sz_decimals.get(flx_asset, 2)
+                xyz_sz_decimals = self.exchange.info.asset_to_sz_decimals.get(xyz_asset, 3)
+                
+                # 使用较小的szDecimals确保两边数量一致（FLX是2位，XYZ是3位，统一用2位）
+                unified_decimals = min(flx_sz_decimals, xyz_sz_decimals)
+                coin_quantity = round(coin_quantity_raw, unified_decimals)
+                
+                flx_quantity = coin_quantity
+                xyz_quantity = coin_quantity
+                
+                # 根据方向下单
+                if opportunity['direction'] == 'FLX_TO_XYZ':
+                    # FLX买入（做多），XYZ卖出（做空）
+                    flx_is_buy = True
+                    xyz_is_buy = False
+                    print(f"策略: 买入FLX做多 {flx_quantity}张, 卖出XYZ做空 {xyz_quantity}张")
+                else:  # XYZ_TO_FLX
+                    # XYZ买入（做多），FLX卖出（做空）
+                    flx_is_buy = False
+                    xyz_is_buy = True
+                    print(f"策略: 卖出FLX做空 {flx_quantity}张, 买入XYZ做多 {xyz_quantity}张")
+                
+                # 下单FLX - 使用SDK原生market_open方法
+                print(f"\n下单 {config.ASSET_PAIR_2} ({'买入' if flx_is_buy else '卖出'})...")
+                flx_order = self.exchange.market_open(
+                    name=config.ASSET_PAIR_2,
+                    is_buy=flx_is_buy,
+                    sz=flx_quantity,
+                    slippage=0.03  # 3%滑点保护
+                )
+                print(f"FLX订单响应: {flx_order}")
+                
+                # 下单XYZ - 使用SDK原生market_open方法
+                print(f"\n下单 {config.ASSET_PAIR_1} ({'买入' if xyz_is_buy else '卖出'})...")
+                xyz_order = self.exchange.market_open(
+                    name=config.ASSET_PAIR_1,
+                    is_buy=xyz_is_buy,
+                    sz=xyz_quantity,
+                    slippage=0.03  # 3%滑点保护
+                )
+                print(f"XYZ订单响应: {xyz_order}")
+                
+                # 检查订单状态 - SDK返回格式: {'status': 'ok', 'response': {'type': 'order', 'data': {'statuses': [...]}}}
+                def check_order_success(order_response):
+                    """检查订单是否成功成交"""
+                    if order_response.get('status') != 'ok':
+                        return False, "status not ok"
+                    statuses = order_response.get('response', {}).get('data', {}).get('statuses', [])
+                    if not statuses:
+                        return False, "no statuses"
+                    first_status = statuses[0]
+                    if 'filled' in first_status:
+                        return True, first_status['filled']
+                    elif 'error' in first_status:
+                        return False, first_status['error']
+                    return False, "unknown status"
+                
+                flx_success, flx_info = check_order_success(flx_order)
+                xyz_success, xyz_info = check_order_success(xyz_order)
+                
+                if flx_success and xyz_success:
+                    print(f"\n{Fore.GREEN}✓ 开仓成功！{Style.RESET_ALL}")
+                    
+                    # 创建仓位记录
+                    position = self.position_manager.open_position(
+                        direction=opportunity['direction'],
+                        entry_spread=opportunity['spread'],
+                        entry_prices={
+                            'flx_bid': market_data['flx_bid'],
+                            'flx_ask': market_data['flx_ask'],
+                            'xyz_bid': market_data['xyz_bid'],
+                            'xyz_ask': market_data['xyz_ask']
+                        },
+                        position_size=position_size_usd
+                    )
+                    
+                    # 记录日志
+                    self.logger.log_open_position(
+                        position, 
+                        notes=f'LIVE实盘交易 | FLX:{flx_order} | XYZ:{xyz_order}'
+                    )
+                    
+                    # 更新历史最佳价差
+                    if opportunity['spread'] > self.best_spread_seen:
+                        self.best_spread_seen = opportunity['spread']
+                    
+                    return position
+                else:
+                    print(f"\n{Fore.RED}✗ 开仓失败{Style.RESET_ALL}")
+                    if not flx_success:
+                        print(f"FLX失败: {flx_info}")
+                    if not xyz_success:
+                        print(f"XYZ失败: {xyz_info}")
+                    
+                    # 回滚：如果一边成功另一边失败，需要平掉成功的那边
+                    if flx_success and not xyz_success:
+                        print(f"{Fore.YELLOW}回滚: 平掉FLX仓位...{Style.RESET_ALL}")
+                        try:
+                            rollback = self.exchange.market_close('flx:TSLA', slippage=0.05)
+                            print(f"回滚结果: {rollback}")
+                        except Exception as e:
+                            print(f"{Fore.RED}回滚失败: {e}{Style.RESET_ALL}")
+                    elif xyz_success and not flx_success:
+                        print(f"{Fore.YELLOW}回滚: 平掉XYZ仓位...{Style.RESET_ALL}")
+                        try:
+                            rollback = self.exchange.market_close('xyz:TSLA', slippage=0.05)
+                            print(f"回滚结果: {rollback}")
+                        except Exception as e:
+                            print(f"{Fore.RED}回滚失败: {e}{Style.RESET_ALL}")
+                    
+                    return None
+                    
+            except Exception as e:
+                print(f"\n{Fore.RED}开仓异常: {e}{Style.RESET_ALL}")
+                import traceback
+                traceback.print_exc()
+                return None
     
     def execute_close(self, position, market_data, exit_info):
         """
@@ -274,10 +447,125 @@ class ArbitrageTrader:
             
             return close_record
         
+        
         else:
-            # TODO: 实盘平仓逻辑
-            print(f"{Fore.RED}实盘交易暂未实现{Style.RESET_ALL}")
-            return None
+            # 实盘平仓逻辑
+            print(f"\n{Fore.YELLOW}{'=' * 80}")
+            print(f"[LIVE] 实盘平仓")
+            print(f"{'=' * 80}{Style.RESET_ALL}")
+            print(f"仓位ID: {position.position_id}")
+            print(f"平仓原因: {exit_info['exit_reason']}")
+            print(f"平仓方式: {exit_info['exit_method']}")
+            print(f"持仓时长: {position.get_holding_duration() / 60:.1f} 分钟")
+            
+            try:
+                # 计算币种数量（用于显示）
+                avg_price = (market_data['flx_mid'] + market_data['xyz_mid']) / 2
+                coin_quantity_raw = position.size / avg_price
+                
+                # 获取每个资产的szDecimals
+                flx_asset = self.exchange.info.name_to_asset(config.ASSET_PAIR_2)
+                xyz_asset = self.exchange.info.name_to_asset(config.ASSET_PAIR_1)
+                flx_sz_decimals = self.exchange.info.asset_to_sz_decimals.get(flx_asset, 2)
+                xyz_sz_decimals = self.exchange.info.asset_to_sz_decimals.get(xyz_asset, 3)
+                
+                # 使用较小的szDecimals确保两边数量一致
+                unified_decimals = min(flx_sz_decimals, xyz_sz_decimals)
+                coin_quantity = round(coin_quantity_raw, unified_decimals)
+                
+                flx_quantity = coin_quantity
+                xyz_quantity = coin_quantity
+                
+                # 根据原方向平仓（反向操作）
+                if position.direction == 'FLX_TO_XYZ':
+                    # 原来是FLX多XYZ空，现在平仓：FLX卖出（平多），XYZ买入（平空）
+                    print(f"平仓策略: 平FLX多头 {flx_quantity}张, 平XYZ空头 {xyz_quantity}张")
+                else:  # XYZ_TO_FLX
+                    # 原来是XYZ多FLX空，现在平仓：XYZ卖出（平多），FLX买入（平空）
+                    print(f"平仓策略: 平FLX空头 {flx_quantity}张, 平XYZ多头 {xyz_quantity}张")
+                
+                # 平仓FLX - 使用SDK原生market_close方法（不指定sz，自动平全部仓位）
+                print(f"\n平仓 {config.ASSET_PAIR_2}...")
+                flx_close = self.exchange.market_close(
+                    coin=config.ASSET_PAIR_2,
+                    slippage=0.03  # 3%滑点保护
+                )
+                print(f"FLX平仓响应: {flx_close}")
+                
+                # 平仓XYZ - 使用SDK原生market_close方法（不指定sz，自动平全部仓位）
+                print(f"\n平仓 {config.ASSET_PAIR_1}...")
+                xyz_close = self.exchange.market_close(
+                    coin=config.ASSET_PAIR_1,
+                    slippage=0.03  # 3%滑点保护
+                )
+                print(f"XYZ平仓响应: {xyz_close}")
+                
+                # 检查平仓状态 - 平仓可能返回None（无仓位）或订单结果
+                def check_close_success(close_response):
+                    """检查平仓是否成功"""
+                    if close_response is None:
+                        return True, "no position to close"  # 无仓位视为成功
+                    if close_response.get('status') != 'ok':
+                        return False, "status not ok"
+                    statuses = close_response.get('response', {}).get('data', {}).get('statuses', [])
+                    if not statuses:
+                        return True, "no statuses (likely no position)"
+                    first_status = statuses[0]
+                    if 'filled' in first_status:
+                        return True, first_status['filled']
+                    elif 'error' in first_status:
+                        return False, first_status['error']
+                    return False, "unknown status"
+                
+                flx_success, flx_info = check_close_success(flx_close)
+                xyz_success, xyz_info = check_close_success(xyz_close)
+                
+                if flx_success and xyz_success:
+                    print(f"\n{Fore.GREEN}✓ 平仓成功！{Style.RESET_ALL}")
+                    
+                    # 计算实际盈亏
+                    if exit_info['exit_method'] == 'reversal':
+                        realized_pnl = exit_info['reverse_spread'] - self.calculator.calculate_open_fee(avg_price)
+                        print(f"反转价差: ${exit_info['reverse_spread']:.4f}")
+                    else:
+                        realized_pnl = position.unrealized_pnl
+                    
+                    print(f"实现盈亏: {utils.color_text(f'${realized_pnl:.4f}', realized_pnl > 0)}")
+                    
+                    # 记录平仓
+                    close_record = self.position_manager.close_position(
+                        position=position,
+                        exit_prices={
+                            'flx_bid': market_data['flx_bid'],
+                            'flx_ask': market_data['flx_ask'],
+                            'xyz_bid': market_data['xyz_bid'],
+                            'xyz_ask': market_data['xyz_ask']
+                        },
+                        exit_method=exit_info['exit_method'],
+                        realized_pnl=realized_pnl
+                    )
+                    
+                    # 记录日志
+                    self.logger.log_close_position(
+                        close_record, 
+                        notes=f'LIVE实盘交易 | FLX:{flx_close} | XYZ:{xyz_close}'
+                    )
+                    self.logger.print_trade_summary(close_record)
+                    
+                    return close_record
+                else:
+                    print(f"\n{Fore.RED}✗ 平仓失败{Style.RESET_ALL}")
+                    if not flx_success:
+                        print(f"FLX失败: {flx_info}")
+                    if not xyz_success:
+                        print(f"XYZ失败: {xyz_info}")
+                    return None
+                    
+            except Exception as e:
+                print(f"\n{Fore.RED}平仓异常: {e}{Style.RESET_ALL}")
+                import traceback
+                traceback.print_exc()
+                return None
     
     def monitor_positions(self, market_data):
         """
@@ -427,6 +715,9 @@ class ArbitrageTrader:
                 if not market_data:
                     time.sleep(arbitrage_config.MONITOR_INTERVAL)
                     continue
+                
+                # 记录价差净利润（每次循环都记录）
+                self.profit_monitor.log_spread_profit(market_data, self.calculator)
                 
                 # 监控现有持仓
                 self.monitor_positions(market_data)

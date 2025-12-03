@@ -7,10 +7,12 @@
 DRY_RUN = False  # True=模拟模式，False=实盘模式
 
 # ==================== 仓位管理 ====================
-INITIAL_POSITION_SIZE = 100  # USDC，初始仓位大小
-MAX_SINGLE_POSITION = 200  # USDC，单笔最大仓位
-MAX_TOTAL_POSITION = 1000  # USDC，总仓位上限
-MAX_POSITIONS = 5  # 最多同时持有的仓位数量
+# 每边余额约25U，10倍杠杆，最大名义仓位约$250
+# 为安全起见使用较小仓位，留余量防止爆仓
+INITIAL_POSITION_SIZE = 100  # USDC，初始仓位大小（名义价值）
+MAX_SINGLE_POSITION = 150  # USDC，单笔最大仓位
+MAX_TOTAL_POSITION = 200  # USDC，总仓位上限
+MAX_POSITIONS = 2  # 最多同时持有的仓位数量（余额有限，减少仓位数量）
 
 # ==================== 开仓条件 ====================
 MIN_NET_PROFIT = 0.15  # USDC，最小净利润阈值（2025-12-03优化：基于数据分析从0.18降至0.15，提高交易频率）
