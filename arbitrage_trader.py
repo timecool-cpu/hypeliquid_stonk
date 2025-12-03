@@ -376,7 +376,7 @@ class ArbitrageTrader:
             
             if gap > 0:
                 print(f"  当前最佳净利润: ${max_net_profit:.4f}")
-                print(f"  距离开仓阈值($0.30): 还差 ${gap:.4f}")
+                print(f"  距离开仓阈值(${arbitrage_config.MIN_NET_PROFIT:.2f}): 还差 ${gap:.4f}")
             else:
                 print(f"  价差满足但等待稳定性确认...")
         
@@ -409,7 +409,9 @@ class ArbitrageTrader:
         
         # 系统信息
         print(f"\n{Fore.CYAN}{'─' * 80}{Style.RESET_ALL}")
-        print(f"模式: {Fore.YELLOW}DRY-RUN{Style.RESET_ALL} | "
+        mode_text = 'DRY-RUN' if self.dry_run else 'LIVE'
+        mode_color = Fore.YELLOW if self.dry_run else Fore.RED
+        print(f"模式: {mode_color}{mode_text}{Style.RESET_ALL} | "
               f"扫描间隔: {arbitrage_config.MONITOR_INTERVAL}秒 | "
               f"最佳价差记录: ${self.best_spread_seen:.4f}")
         print(f"{Fore.CYAN}{'─' * 80}{Style.RESET_ALL}")
