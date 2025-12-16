@@ -20,6 +20,10 @@ class Config:
     # 交易对配置
     FLX_SYMBOL = 'TSLA'  # Hyperliquid上的TSLA永续合约
     XYZ_SYMBOL = 'TSLA'  # 另一个交易所的TSLA
+    
+    # HIP-3 资产对配置
+    ASSET_PAIR_1 = "xyz:TSLA"  # xyz 平台的 TSLA
+    ASSET_PAIR_2 = "flx:TSLA"  # flx (Felix) 平台的 TSLA
 
 
 class ArbitrageConfig:
