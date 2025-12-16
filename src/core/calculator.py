@@ -2,8 +2,7 @@
 套利利润计算模块
 提供精确的利润计算、手续费估算、开仓条件验证等功能
 """
-import config
-import arbitrage_config
+from src.config import config, arbitrage_config
 
 
 class ArbitrageCalculator:

@@ -1,150 +1,144 @@
-# Hyperliquid TSLA 套利监控系统
+# Hyperliquid TSLA 套利交易系统
 
-监控 Hyperliquid 上 `xyz:TSLA` 和 `flx:TSLA` 之间的价差，识别套利机会。
+一个用于在 Hyperliquid 平台上进行 TSLA 资产套利交易的自动化系统，监控 `flx:TSLA` 和 `xyz:TSLA` 之间的价差机会。
 
-## 功能特性
+## 项目结构
 
-- ✅ 实时获取两个市场的 L2 订单簿数据
-- ✅ 计算买卖价差和中间价
-- ✅ 自动识别套利机会（基于可配置阈值）
-- ✅ 显示订单簿深度
-- ✅ 记录历史价差数据到 CSV
-- ✅ 彩色终端输出
+```
+hyperliquid_arbitrage/
+├── src/                         # 源代码
+│   ├── core/                    # 核心交易逻辑
+│   │   ├── trader.py           # 交易引擎
+│   │   ├── calculator.py       # 利润计算器
+│   │   ├── position_manager.py # 仓位管理
+│   │   └── logger.py           # 日志记录
+│   ├── monitors/                # 监控模块
+│   ├── config/                  # 配置文件
+│   └── utils/                   # 工具函数
+│
+├── scripts/                     # 脚本
+│   ├── run_trader.py           # 主启动脚本
+│   ├── analysis/               # 数据分析脚本
+│   └── debug/                  # 调试工具
+│
+├── data/                        # 数据文件
+│   └── logs/                   # 交易日志
+│
+├── docs/                        # 文档
+└── tests/                       # 测试文件
+```
 
 ## 快速开始
 
-### 安装依赖
+### 1. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 运行监控
+### 2. 配置环境变量
 
-**测试模式（仅获取一次数据）：**
-```bash
-python3 spread_monitor.py --test-mode
+创建 `.env` 文件并添加你的私钥：
+
+```
+HYPERLIQUID_PRIVATE_KEY=your_private_key_here
 ```
 
-**持续监控模式：**
+### 3. 运行交易引擎
+
+**模拟模式（推荐先测试）：**
 ```bash
-python3 spread_monitor.py
+python scripts/run_trader.py
 ```
 
-按 `Ctrl+C` 停止监控。
+**实盘模式：**
+```bash
+python scripts/run_trader.py --live
+```
+
+## 核心功能
+
+### 交易策略
+- **价差套利**：监控 FLX 和 XYZ 两个 DEX 之间的 TSLA 价差
+- **双向交易**：支持 FLX→XYZ 和 XYZ→FLX 两个方向
+- **自动平仓**：价差反转、止盈、超时三种平仓机制
+
+### 风险控制
+- 仓位大小限制
+- 最大持仓数量限制
+- 超时强制平仓（2.5小时）
+- 价差稳定性检查
+
+### 平仓条件
+1. **价差反转**：反向价差达到阈值（FLX→XYZ: $0.05, XYZ→FLX: $0.10）
+2. **止盈**：浮盈达到 $0.35
+3. **超时兜底**：持仓超过 2.5 小时
 
 ## 配置说明
 
-编辑 `config.py` 来调整监控参数：
+主要配置文件：`src/config/arbitrage_config.py`
 
 ```python
-# 监控的资产对
-ASSET_PAIR_1 = "xyz:TSLA"  # xyz 平台的 TSLA
-ASSET_PAIR_2 = "flx:TSLA"  # flx (Felix) 平台的 TSLA
+# 交易模式
+DRY_RUN = False  # True=模拟，False=实盘
 
-# 监控参数
-REFRESH_INTERVAL = 2  # 秒，价格刷新间隔
-SPREAD_THRESHOLD = 0.1  # 百分比，触发套利提醒的最小价差
+# 仓位管理
+INITIAL_POSITION_SIZE = 100  # USDC
+MAX_POSITIONS = 2
 
-# 手续费配置
-MAKER_FEE = 0.0002  # 0.02% maker fee
-TAKER_FEE = 0.0005  # 0.05% taker fee
+# 开仓条件
+MIN_NET_PROFIT = 0.10  # 最小净利润阈值
 
-# 交易参数（可选）
-DEFAULT_POSITION_SIZE = 100  # USDC
+# 平仓条件
+REVERSAL_MIN_SPREAD_FLX_TO_XYZ = 0.05
+REVERSAL_MIN_SPREAD_XYZ_TO_FLX = 0.10
+TAKE_PROFIT_TARGET = 0.35
+POSITION_TIMEOUT_HOURS = 2.5
 ```
 
-## 输出说明
+## 数据分析
 
-监控程序会显示：
+项目包含多个分析脚本，位于 `scripts/analysis/`：
 
-1. **市场数据**：每个市场的买一价、卖一价、中间价
-2. **价差分析**：绝对价差和百分比价差
-3. **套利机会**：当价差超过阈值时，显示预估利润
-4. **订单簿深度**：显示前 5 档买卖单（测试模式）
+- `analyze_spread.py` - 价差分析
+- `analyze_reversal.py` - 反转机会分析
+- `analyze_trading_performance.py` - 交易表现分析
+- `optimize_strategy.py` - 策略优化
 
-示例输出：
-```
-================================================================================
-                        TSLA 套利监控 - 2025-11-28 20:03:21                         
-================================================================================
+## 监控和日志
 
-【xyz:TSLA】
-  买一: 428.5600
-  卖一: 428.5700
-  中间价: 428.5650
+### 交易日志
+所有交易记录保存在 `data/logs/arbitrage_trades.csv`
 
-【flx:TSLA】
-  买一: 428.5500
-  卖一: 428.5600
-  中间价: 428.5550
+### 价差日志
+价差历史数据保存在 `data/logs/spread_profit_log.csv`
 
---------------------------------------------------------------------------------
+## 安全提示
 
-【价差分析】
-  绝对价差: 0.010000
-  百分比价差: 0.0023%
+⚠️ **重要**：
+- 首次使用请在模拟模式下充分测试
+- 确保理解所有风险控制参数
+- 实盘交易前请仔细检查配置
+- 建议使用小额资金开始
 
-  暂无套利机会
-```
+## 最近修复
 
-## 数据日志
+- ✅ 修复持仓恢复时开仓时间丢失的问题
+- ✅ 修复属性名不一致导致的bug
+- ✅ 修复变量作用域问题
+- ✅ 改进项目结构，符合软件开发规范
 
-所有历史价差数据会记录到 `spread_history.csv`，包含：
-- 时间戳
-- 两个市场的买一、卖一、中间价
-- 价差（绝对值和百分比）
-- 是否存在套利机会
+## 文档
 
-## 文件结构
+详细文档请查看 `docs/` 目录：
+- [套利策略说明](docs/ARBITRAGE_README.md)
+- [数据收集指南](docs/DATA_COLLECTION.md)
+- [实盘交易准备](docs/LIVE_TRADING_READY.md)
 
-```
-.
-├── config.py              # 配置文件
-├── spread_monitor.py      # 主监控脚本
-├── utils.py               # 辅助函数
-├── requirements.txt       # Python 依赖
-├── spread_history.csv     # 历史数据日志（运行后生成）
-└── README.md              # 本文件
-```
+## 许可证
 
-## 重要提示
+MIT License
 
-⚠️ **当前版本仅用于监控**：此版本不包含自动交易功能。如果发现持续的套利机会，可以在后续版本中添加交易执行模块。
+## 免责声明
 
-⚠️ **风险提示**：
-- 合成股票永续合约可能具有不同的资金费率
-- 两个市场之间可能存在流动性差异
-- 价差收敛无法保证
-- 请自行评估风险后再考虑实际交易
-
-## 技术说明
-
-### HIP-3 市场
-
-`xyz:TSLA` 和 `flx:TSLA` 都是 HIP-3（Hyperliquid Improvement Proposal 3）部署的永续合约市场：
-- `xyz:TSLA`：由 trade.xyz (Hyperunit) 部署
-- `flx:TSLA`：由 Felix Protocol 部署
-
-### API 使用
-
-由于 Hyperliquid Python SDK 的 `l2_snapshot()` 方法不支持 HIP-3 资产名称，本项目直接使用 SDK 的底层 `post()` 方法：
-
-```python
-orderbook = info.post("/info", {"type": "l2Book", "coin": "xyz:TSLA"})
-```
-
-## 下一步计划
-
-如果监控结果显示存在稳定的套利机会，可以考虑：
-
-1. **长期数据收集**：运行监控数小时/天，收集更多历史数据
-2. **统计分析**：分析套利机会的频率、持续时间和利润空间
-3. **交易执行**（需额外开发）：
-   - 实现自动下单功能
-   - 添加风险管理（止损、仓位控制）
-   - 测试对冲策略
-
-## 许可
-
-本项目仅供学习和研究使用。
+本软件仅供学习和研究使用。使用本软件进行实盘交易的所有风险由用户自行承担。

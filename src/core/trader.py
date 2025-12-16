@@ -13,14 +13,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # 导入现有模块
-import config
-import arbitrage_config
-from arbitrage_calculator import ArbitrageCalculator
-from position_manager import PositionManager, Position
-from arbitrage_logger import ArbitrageLogger
-from spread_profit_monitor import SpreadProfitMonitor
-import utils
-import hip3_trading  # HIP-3资产交易工具
+from src.config import config, arbitrage_config
+from src.core.calculator import ArbitrageCalculator
+from src.core.position_manager import PositionManager, Position
+from src.core.logger import ArbitrageLogger
+from src.monitors.spread_profit_monitor import SpreadProfitMonitor
+from src.utils import utils
+from src.utils import hip3_trading  # HIP-3资产交易工具
 
 # 导入Hyperliquid SDK
 from hyperliquid.info import Info

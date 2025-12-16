@@ -25,6 +25,7 @@ class Position:
         self.entry_spread = entry_spread
         self.entry_prices = entry_prices
         self.position_size = position_size
+        self.size = position_size  # 别名，保持向后兼容
         self.entry_time = entry_time or datetime.now()
         self.unrealized_pnl = 0.0
         self.position_id = f"{direction}_{self.entry_time.strftime('%Y%m%d%H%M%S')}"
@@ -104,7 +105,7 @@ class PositionManager:
         
         return True, "满足加仓条件"
     
-    def open_position(self, direction, entry_spread, entry_prices, position_size):
+    def open_position(self, direction, entry_spread, entry_prices, position_size, entry_time=None):
         """
         开仓
         
@@ -113,11 +114,12 @@ class PositionManager:
             entry_spread: 开仓价差
             entry_prices: 开仓价格字典
             position_size: 仓位大小
+            entry_time: 开仓时间（可选，用于恢复历史持仓）
         
         Returns:
             Position对象
         """
-        position = Position(direction, entry_spread, entry_prices, position_size)
+        position = Position(direction, entry_spread, entry_prices, position_size, entry_time)
         self.positions.append(position)
         return position
     
