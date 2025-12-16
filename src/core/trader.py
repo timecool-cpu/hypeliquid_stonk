@@ -17,6 +17,7 @@ from src.config import config, arbitrage_config
 from src.core.calculator import ArbitrageCalculator
 from src.core.position_manager import PositionManager, Position
 from src.core.logger import ArbitrageLogger
+from src.core.risk_manager import RiskManager, RiskLevel
 from src.monitors.spread_profit_monitor import SpreadProfitMonitor
 from src.utils import utils
 from src.utils import hip3_trading  # HIP-3资产交易工具
@@ -81,6 +82,12 @@ class ArbitrageTrader:
         self.position_manager = PositionManager(self.calculator)
         self.logger = ArbitrageLogger()
         self.profit_monitor = SpreadProfitMonitor()
+        
+        # 初始化风控管理器
+        self.risk_manager = RiskManager(
+            info=self.info,
+            wallet_address=self.wallet_address
+        )
         
         # 价差历史(用于加仓判断)
         self.best_spread_seen = 0
@@ -260,8 +267,8 @@ class ArbitrageTrader:
                 # 如果没有未平仓记录，返回最近的开仓时间
                 latest = open_trades.iloc[-1]
             else:
-                # 返回最早的未平仓记录时间
-                latest = unclosed_trades.iloc[0]
+                # 返回最新的未平仓记录时间（修复：之前错误地取了最早的）
+                latest = unclosed_trades.iloc[-1]
             
             # 解析时间
             entry_time = datetime.strptime(latest['timestamp'], '%Y-%m-%d %H:%M:%S')
@@ -383,6 +390,14 @@ class ArbitrageTrader:
             )
         
         if not can_trade:
+            return None
+        
+        # 风控检查：余额是否充足
+        can_open, risk_reason = self.risk_manager.can_open_position(
+            arbitrage_config.INITIAL_POSITION_SIZE
+        )
+        if not can_open:
+            print(f"{Fore.RED}风控拒绝开仓: {risk_reason}{Style.RESET_ALL}")
             return None
         
         return result
@@ -761,6 +776,33 @@ class ArbitrageTrader:
             market_data['xyz_bid'], market_data['xyz_ask']
         )
         
+        # 风控检查：清算风险
+        has_warning, need_emergency, liq_infos = self.risk_manager.check_liquidation_risk()
+        
+        if need_emergency:
+            # 紧急平仓
+            print(f"\n{Fore.RED}🚨 风控触发紧急平仓！{Style.RESET_ALL}")
+            for info in liq_infos:
+                if info.risk_level == RiskLevel.CRITICAL:
+                    print(f"  {info.dex} {info.coin}: 距离清算仅 {info.distance_pct:.1f}%")
+            
+            # 平掉所有持仓
+            for position in self.position_manager.positions[:]:
+                exit_info = {
+                    'should_exit': True,
+                    'exit_reason': f'风控紧急平仓 (距离清算<{self.risk_manager.EMERGENCY_THRESHOLD}%)',
+                    'exit_method': 'emergency'
+                }
+                self.execute_close(position, market_data, exit_info)
+            return
+        
+        if has_warning:
+            # 打印预警
+            print(f"\n{Fore.YELLOW}⚠️ 清算风险预警:{Style.RESET_ALL}")
+            for info in liq_infos:
+                if info.risk_level == RiskLevel.WARNING:
+                    print(f"  {info.dex} {info.coin}: 距离清算 {info.distance_pct:.1f}%")
+        
         # 检查每个持仓的平仓条件
         positions_to_close = []
         for position in self.position_manager.positions:
@@ -913,6 +955,27 @@ class ArbitrageTrader:
             print(f"  总盈亏: {utils.color_text(realized_pnl_text, stats['total_realized_pnl'] > 0)} | "
                   f"平均: ${stats['avg_pnl']:.4f} | "
                   f"平均持仓: {stats['avg_holding_time'] / 60:.1f}分钟")
+        
+        # 风控状态
+        print(f"\n{Fore.YELLOW}【风控状态】{Style.RESET_ALL}")
+        balance = self.risk_manager.get_balance_info()
+        print(f"  可用余额: XYZ ${balance.xyz_available:.2f} | FLX {balance.flx_available:.2f} USDH")
+        
+        has_warning, need_emergency, liq_infos = self.risk_manager.check_liquidation_risk()
+        if liq_infos:
+            for info in liq_infos:
+                if info.risk_level == RiskLevel.CRITICAL:
+                    color = Fore.RED
+                    icon = "🚨"
+                elif info.risk_level == RiskLevel.WARNING:
+                    color = Fore.YELLOW
+                    icon = "⚠️"
+                else:
+                    color = Fore.GREEN
+                    icon = "✅"
+                print(f"  {info.dex} 清算距离: {color}{info.distance_pct:.1f}% {icon}{Style.RESET_ALL}")
+        else:
+            print(f"  {Fore.GREEN}✅ 无持仓风险{Style.RESET_ALL}")
         
         # 系统信息
         print(f"\n{Fore.CYAN}{'─' * 80}{Style.RESET_ALL}")
