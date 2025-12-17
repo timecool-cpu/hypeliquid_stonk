@@ -73,44 +73,61 @@ class RiskManager:
         else:
             self.wallet_address = wallet_address
     
-    def get_balance_info(self) -> BalanceInfo:
-        """获取所有账户余额信息"""
-        xyz_available = 0.0
-        main_state = self.info.user_state(self.wallet_address)
-        if main_state:
-            xyz_available = float(main_state.get('withdrawable', 0))
+    def get_balance_info(self, max_retries: int = 3) -> BalanceInfo:
+        """获取所有账户余额信息，带重试机制"""
+        import time
         
-        flx_available = 0.0
-        spot_state = self.info.spot_user_state(self.wallet_address)
-        if spot_state and 'balances' in spot_state:
-            for balance in spot_state['balances']:
-                if balance.get('coin') == 'USDH':
-                    total = float(balance.get('total', 0))
-                    hold = float(balance.get('hold', 0))
-                    flx_available = total - hold
-                    break
-        
-        xyz_dex_value = 0.0
-        xyz_state = self.info.user_state(self.wallet_address, 'xyz')
-        if xyz_state:
-            ms = xyz_state.get('marginSummary', {})
-            xyz_dex_value = float(ms.get('accountValue', 0))
-        
-        flx_dex_value = 0.0
-        flx_state = self.info.user_state(self.wallet_address, 'flx')
-        if flx_state:
-            ms = flx_state.get('marginSummary', {})
-            flx_dex_value = float(ms.get('accountValue', 0))
-        
-        total_value = xyz_available + flx_available + xyz_dex_value + flx_dex_value
-        
-        return BalanceInfo(
-            xyz_available=xyz_available,
-            flx_available=flx_available,
-            xyz_dex_value=xyz_dex_value,
-            flx_dex_value=flx_dex_value,
-            total_value=total_value
-        )
+        for attempt in range(max_retries):
+            try:
+                xyz_available = 0.0
+                main_state = self.info.user_state(self.wallet_address)
+                if main_state:
+                    xyz_available = float(main_state.get('withdrawable', 0))
+                
+                flx_available = 0.0
+                spot_state = self.info.spot_user_state(self.wallet_address)
+                if spot_state and 'balances' in spot_state:
+                    for balance in spot_state['balances']:
+                        if balance.get('coin') == 'USDH':
+                            total = float(balance.get('total', 0))
+                            hold = float(balance.get('hold', 0))
+                            flx_available = total - hold
+                            break
+                
+                xyz_dex_value = 0.0
+                xyz_state = self.info.user_state(self.wallet_address, 'xyz')
+                if xyz_state:
+                    ms = xyz_state.get('marginSummary', {})
+                    xyz_dex_value = float(ms.get('accountValue', 0))
+                
+                flx_dex_value = 0.0
+                flx_state = self.info.user_state(self.wallet_address, 'flx')
+                if flx_state:
+                    ms = flx_state.get('marginSummary', {})
+                    flx_dex_value = float(ms.get('accountValue', 0))
+                
+                total_value = xyz_available + flx_available + xyz_dex_value + flx_dex_value
+                
+                return BalanceInfo(
+                    xyz_available=xyz_available,
+                    flx_available=flx_available,
+                    xyz_dex_value=xyz_dex_value,
+                    flx_dex_value=flx_dex_value,
+                    total_value=total_value
+                )
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    time.sleep(1)  # 等待1秒后重试
+                    continue
+                # 最后一次尝试失败，返回空余额信息
+                print(f"{Fore.YELLOW}获取余额失败: {e}{Style.RESET_ALL}")
+                return BalanceInfo(
+                    xyz_available=0.0,
+                    flx_available=0.0,
+                    xyz_dex_value=0.0,
+                    flx_dex_value=0.0,
+                    total_value=0.0
+                )
     
     def can_open_position(self, position_size_usd: float) -> Tuple[bool, str]:
         """检查是否可以开仓"""
@@ -131,8 +148,12 @@ class RiskManager:
         result = []
         
         for dex_name in ['flx', 'xyz']:
-            state = self.info.user_state(self.wallet_address, dex_name)
-            if not state:
+            try:
+                state = self.info.user_state(self.wallet_address, dex_name)
+                if not state:
+                    continue
+            except Exception as e:
+                print(f"{Fore.YELLOW}获取{dex_name}状态失败: {e}{Style.RESET_ALL}")
                 continue
             
             positions = state.get('assetPositions', [])
