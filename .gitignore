@@ -51,15 +51,3 @@ Thumbs.db
 spread_history.csv
 arbitrage_trades.csv
 spread_profit_log.csv
-
-# 旧文件（已重组）
-arbitrage_trader.py
-arbitrage_calculator.py
-arbitrage_logger.py
-position_manager.py
-spread_monitor.py
-spread_profit_monitor.py
-config.py
-arbitrage_config.py
-utils.py
-hip3_trading.py
